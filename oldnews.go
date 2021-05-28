@@ -37,20 +37,25 @@ func loadPage(title string) (*Page, error) {
 }
 
 func renderTemplate(w http.ResponseWriter, tmpl string, p *Page) {
-	t, _ := template.ParseFiles("view.html")
+	t, _ := template.ParseFiles("html/view.html")
 	t.Execute(w, p)
 }
 
 func viewHandler(w http.ResponseWriter, r *http.Request) {
 	title := r.URL.Path[len("/"):]
-	if len(title) > 1 {
-		log.Printf("trying to get %s", title)
-		p, _ := loadPage(title)
-		renderTemplate(w, "view", p)
-	} else {
-		p, _ := loadPage("index.html")
-		renderTemplate(w, "view", p)
 
+	// TODO: should integrate something like vault && better routing
+	if title != "token.json" && title != "credentials.json" {
+
+		if len(title) > 1 {
+			log.Printf("trying to get %s", title)
+			p, _ := loadPage(title)
+			renderTemplate(w, "view", p)
+		} else {
+			p, _ := loadPage("html/index.html")
+			renderTemplate(w, "view", p)
+
+		}
 	}
 }
 
@@ -305,10 +310,10 @@ func main() {
 
 				links = append(links, f.Name())
 
-				//openbrowser(f.Name())
+				// openbrowser(f.Name())
 
 			} else {
-				fmt.Println("Error", body.Subject)
+				log.Println("Error in", body.Subject)
 			}
 
 		}
