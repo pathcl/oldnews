@@ -1,3 +1,4 @@
+// controller/loop
 package main
 
 import (
@@ -13,6 +14,7 @@ import (
 	"runtime"
 	"strconv"
 	"strings"
+	"text/template"
 
 	"github.com/pkg/errors"
 	"golang.org/x/net/context"
@@ -20,6 +22,37 @@ import (
 	"golang.org/x/oauth2/google"
 	"google.golang.org/api/gmail/v1"
 )
+
+type Page struct {
+	Title string
+	Body  []byte
+}
+
+func loadPage(title string) (*Page, error) {
+	body, err := ioutil.ReadFile(title)
+	if err != nil {
+		return nil, err
+	}
+	return &Page{Title: title, Body: body}, nil
+}
+
+func renderTemplate(w http.ResponseWriter, tmpl string, p *Page) {
+	t, _ := template.ParseFiles("view.html")
+	t.Execute(w, p)
+}
+
+func viewHandler(w http.ResponseWriter, r *http.Request) {
+	title := r.URL.Path[len("/"):]
+	if len(title) > 1 {
+		log.Printf("trying to get %s", title)
+		p, _ := loadPage(title)
+		renderTemplate(w, "view", p)
+	} else {
+		p, _ := loadPage("index.html")
+		renderTemplate(w, "view", p)
+
+	}
+}
 
 func openbrowser(url string) {
 	var err error
@@ -156,15 +189,6 @@ func parseMessage(srv *gmail.Service, gmailMessage *gmail.Message, user string) 
 		Subject: findHeader(gmailMessage.Payload, "Subject"),
 	}
 
-	//	plainMessagePart := findMessagePartByMimeType(gmailMessage.Payload, "text/plain")
-	//	if plainMessagePart != nil {
-	//		plainMessage, err := getMessagePartData(srv, user, gmailMessage.Id, plainMessagePart)
-	//		if err != nil {
-	//			return nil, errors.Wrap(err, "parseMessage plain")
-	//		}
-	//		message.BodyPlain = plainMessage
-	//	}
-
 	htmlMessagePart := findMessagePartByMimeType(gmailMessage.Payload, "text/html")
 	if htmlMessagePart != nil {
 		htmlMessage, err := getMessagePartData(srv, user, gmailMessage.Id, htmlMessagePart)
@@ -178,6 +202,36 @@ func parseMessage(srv *gmail.Service, gmailMessage *gmail.Message, user string) 
 }
 
 func main() {
+
+	const tpl = `
+<!DOCTYPE html>
+<html>
+	<head>
+	<meta charset="UTF-8">
+	<title>{{.Title}}</title>
+	  <meta name="viewport" content="width=device-width, initial-scale=1">
+	  <link rel="stylesheet" href="https://maxcdn.bootstrapcdn.com/bootstrap/3.4.1/css/bootstrap.min.css">
+	  <script src="https://ajax.googleapis.com/ajax/libs/jquery/3.5.1/jquery.min.js"></script>
+	  <script src="https://maxcdn.bootstrapcdn.com/bootstrap/3.4.1/js/bootstrap.min.js"></script>
+	</head>
+	<body>
+		{{range .Items}}
+		<ul> <a href="{{ . }}">{{ . }}</a> </ul>
+		{{end}}
+	</body>
+</html>`
+
+	check := func(err error) {
+		if err != nil {
+			log.Fatal(err)
+		}
+	}
+	t, err := template.New("webpage").Parse(tpl)
+	check(err)
+
+	var links []string
+
+	// this needs to be every html file path
 
 	b, err := ioutil.ReadFile("credentials.json")
 	if err != nil {
@@ -198,6 +252,7 @@ func main() {
 	flag.Parse()
 
 	pageToken := ""
+	links = []string{}
 	for {
 		req := svc.Users.Messages.List("me").Q(*query)
 		if pageToken != "" {
@@ -248,7 +303,9 @@ func main() {
 					log.Fatal(err2)
 				}
 
-				openbrowser(f.Name())
+				links = append(links, f.Name())
+
+				//openbrowser(f.Name())
 
 			} else {
 				fmt.Println("Error", body.Subject)
@@ -261,12 +318,36 @@ func main() {
 		}
 		pageToken = r.NextPageToken
 	}
+
+	data := struct {
+		Title string
+		Items []string
+	}{
+		Title: "My page",
+		Items: links,
+	}
+
 	log.Printf("total: %v\n", total)
 
-	for _, m := range msgs {
-		log.Printf("\nMessage URL: https://mail.google.com/mail/u/0/#all/%v\n", m.gmailID)
-		log.Printf("Size: %v, Date: %v, Snippet: %q\n", m.size, m.date, m.snippet)
+	f, err := os.Create("index.html")
+	if err != nil {
+		log.Println("create file: ", err)
+		return
 	}
-	log.Printf("total: %v\n", total)
+
+	err = t.Execute(f, data)
+	if err != nil {
+		log.Print("execute: ", err)
+		return
+	}
+	f.Close()
+
+	//for _, m := range msgs {
+	//	log.Printf("\nMessage URL: https://mail.google.com/mail/u/0/#all/%v\n", m.gmailID)
+	//		log.Printf("Size: %v, Date: %v, Snippet: %q\n", m.size, m.date, m.snippet)
+	//	}
+
+	http.HandleFunc("/", viewHandler)
+	http.ListenAndServe(":8080", nil)
 
 }

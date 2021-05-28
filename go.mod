@@ -1,8 +1,10 @@
-module github.com/pathcl/go-samples/gmail/quickstart
+module github.com/pathcl/oldnews
 
-go 1.15
+go 1.16
 
 require (
-	github.com/pkg/errors v0.9.1 // indirect
-	google.golang.org/api v0.45.0 // indirect
+	github.com/pkg/errors v0.9.1
+	golang.org/x/net v0.0.0-20210510120150-4163338589ed
+	golang.org/x/oauth2 v0.0.0-20210514164344-f6687ab2804c
+	google.golang.org/api v0.46.0
 )
