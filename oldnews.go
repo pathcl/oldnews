@@ -10,11 +10,9 @@ import (
 	"log"
 	"net/http"
 	"os"
-	"os/exec"
-	"runtime"
-	"strconv"
 	"strings"
 	"text/template"
+	"time"
 
 	"github.com/pkg/errors"
 	"golang.org/x/net/context"
@@ -26,6 +24,12 @@ import (
 type Page struct {
 	Title string
 	Body  []byte
+}
+
+func epochToHumanReadable(epoch int64) string {
+	t := time.Unix(epoch, 0).String()
+	t = strings.ReplaceAll(t, " ", "")
+	return t
 }
 
 func loadPage(title string) (*Page, error) {
@@ -48,7 +52,7 @@ func viewHandler(w http.ResponseWriter, r *http.Request) {
 	if title != "token.json" && title != "credentials.json" {
 
 		if len(title) > 1 {
-			log.Printf("trying to get %s", title)
+			log.Printf("%s trying to get %s", r.RemoteAddr, title)
 			p, _ := loadPage(title)
 			renderTemplate(w, "view", p)
 		} else {
@@ -59,31 +63,12 @@ func viewHandler(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-func openbrowser(url string) {
-	var err error
-
-	switch runtime.GOOS {
-	case "linux":
-		err = exec.Command("xdg-open", url).Start()
-	case "windows":
-		err = exec.Command("rundll32", "url.dll,FileProtocolHandler", url).Start()
-	case "darwin":
-		err = exec.Command("open", url).Start()
-	default:
-		err = fmt.Errorf("unsupported platform")
-	}
-	if err != nil {
-		log.Fatal(err)
-	}
-
-}
-
 // Retrieve a token, saves the token, then returns the generated client.
 func getClient(config *oauth2.Config) *http.Client {
 	// The file token.json stores the user's access and refresh tokens, and is
 	// created automatically when the authorization flow completes for the first
 	// time.
-	tokFile := "token.json"
+	tokFile := "/home/pathcl/.token.json"
 	tok, err := tokenFromFile(tokFile)
 	if err != nil {
 		tok = getTokenFromWeb(config)
@@ -206,39 +191,12 @@ func parseMessage(srv *gmail.Service, gmailMessage *gmail.Message, user string) 
 	return message, nil
 }
 
-func main() {
-
-	const tpl = `
-<!DOCTYPE html>
-<html>
-	<head>
-	<meta charset="UTF-8">
-	<title>{{.Title}}</title>
-	  <meta name="viewport" content="width=device-width, initial-scale=1">
-	  <link rel="stylesheet" href="https://maxcdn.bootstrapcdn.com/bootstrap/3.4.1/css/bootstrap.min.css">
-	  <script src="https://ajax.googleapis.com/ajax/libs/jquery/3.5.1/jquery.min.js"></script>
-	  <script src="https://maxcdn.bootstrapcdn.com/bootstrap/3.4.1/js/bootstrap.min.js"></script>
-	</head>
-	<body>
-		{{range .Items}}
-		<ul> <a href="{{ . }}">{{ . }}</a> </ul>
-		{{end}}
-	</body>
-</html>`
-
-	check := func(err error) {
-		if err != nil {
-			log.Fatal(err)
-		}
-	}
-	t, err := template.New("webpage").Parse(tpl)
-	check(err)
-
+func fetch() []string {
 	var links []string
 
 	// this needs to be every html file path
 
-	b, err := ioutil.ReadFile("credentials.json")
+	b, err := ioutil.ReadFile("/home/pathcl/.credentials.json")
 	if err != nil {
 		log.Fatalf("Unable to read client secret file: %v", err)
 	}
@@ -293,8 +251,8 @@ func main() {
 
 			if len(body.BodyHtml) > 0 {
 
-				s := strconv.FormatInt(msg.InternalDate, 10)
-				f, err := os.Create("html/" + s + ".html")
+				t := epochToHumanReadable(msg.InternalDate / 1000)
+				f, err := os.Create("html/" + t + ".html")
 
 				if err != nil {
 					log.Fatal(err)
@@ -310,8 +268,6 @@ func main() {
 
 				links = append(links, f.Name())
 
-				// openbrowser(f.Name())
-
 			} else {
 				log.Println("Error in", body.Subject)
 			}
@@ -323,6 +279,65 @@ func main() {
 		}
 		pageToken = r.NextPageToken
 	}
+	return links
+}
+
+func createHtml() {
+
+	links := fetch()
+
+	const tpl = `
+<!DOCTYPE html>
+<html>
+ <head>
+ <meta charset="UTF-8">
+ <title>{{.Title}}</title>
+   <meta name="viewport" content="width=device-width, initial-scale=1">
+   <link rel="stylesheet" href="https://maxcdn.bootstrapcdn.com/bootstrap/3.4.1/css/bootstrap.min.css">
+   <script src="https://ajax.googleapis.com/ajax/libs/jquery/3.5.1/jquery.min.js"></script>
+   <script src="https://maxcdn.bootstrapcdn.com/bootstrap/3.4.1/js/bootstrap.min.js"></script>
+ </head>
+
+ <style>
+ a:link {
+   color: green;
+   background-color: transparent;
+   text-decoration: none;
+ }
+
+ a:visited {
+   color: pink;
+   background-color: transparent;
+   text-decoration: none;
+ }
+
+ a:hover {
+   color: red;
+   background-color: transparent;
+   text-decoration: underline;
+ }
+
+ a:active {
+   color: yellow;
+   background-color: transparent;
+   text-decoration: underline;
+ }
+ </style>
+
+ <body>
+  {{range .Items}}
+  <ul> <a href="{{ . }}">{{ . }}</a> </ul>
+  {{end}}
+ </body>
+</html>`
+
+	check := func(err error) {
+		if err != nil {
+			log.Fatal(err)
+		}
+	}
+	t, err := template.New("webpage").Parse(tpl)
+	check(err)
 
 	data := struct {
 		Title string
@@ -332,9 +347,7 @@ func main() {
 		Items: links,
 	}
 
-	log.Printf("total: %v\n", total)
-
-	f, err := os.Create("index.html")
+	f, err := os.Create("html/index.html")
 	if err != nil {
 		log.Println("create file: ", err)
 		return
@@ -348,11 +361,19 @@ func main() {
 	f.Close()
 
 	//for _, m := range msgs {
-	//	log.Printf("\nMessage URL: https://mail.google.com/mail/u/0/#all/%v\n", m.gmailID)
-	//		log.Printf("Size: %v, Date: %v, Snippet: %q\n", m.size, m.date, m.snippet)
-	//	}
+	// log.Printf("\nMessage URL: https://mail.google.com/mail/u/0/#all/%v\n", m.gmailID)
+	//  log.Printf("Size: %v, Date: %v, Snippet: %q\n", m.size, m.date, m.snippet)
+	// }
 
+}
+
+func handleRequests() {
 	http.HandleFunc("/", viewHandler)
 	http.ListenAndServe(":8080", nil)
+}
 
+func main() {
+	// TODO: dont block requests/goroutines for fetch()
+	createHtml()
+	handleRequests()
 }
